@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -22,7 +23,31 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent  # project root
 DB = Path(os.environ.get("HARNESS_DB", str(ROOT / "harness" / "hackbots.db")))
-CLI = os.environ.get("MAESTRO_CLI", str(Path.home() / ".local/bin/maestro-cli"))
+
+
+def _find_maestro_cli() -> str:
+    env = os.environ.get("MAESTRO_CLI")
+    if env:
+        return env
+    found = shutil.which("maestro-cli")
+    if found:
+        return found
+    home = Path.home()
+    candidates = [
+        home / ".local/bin/maestro-cli",
+        Path("/usr/local/bin/maestro-cli"),
+        home / "Applications/Maestro.app/Contents/Resources/maestro-cli",
+    ]
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        candidates.append(Path(local) / "Programs/Maestro/resources/maestro-cli.exe")
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return "maestro-cli"
+
+
+CLI = _find_maestro_cli()
 RUNS_DIR = ROOT / "reports" / "runs"
 
 

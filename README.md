@@ -383,3 +383,19 @@ python3 harness/scripts/orchestrate.py hunt <target> --budget 10
 Built on [Claude-BugHunter](https://github.com/elementalsouls/Claude-BugHunter)
 by Sachin Sharma / ElementalSoul — code MIT, content CC BY 4.0. The 83 upstream
 skills are unchanged; this fork only adds the control plane and the 5 skills above.
+
+### OS compatibility
+
+| Component | Linux | macOS | Windows |
+|---|---|---|---|
+| 88 skills + 15 commands | `scripts/install.sh` | `scripts/install.sh` | `scripts/install.ps1` |
+| Control-plane install | `scripts/install-hackbots.sh` | `scripts/install-hackbots.sh` | `scripts/install-hackbots.ps1` |
+| Start stack | `start_stack.sh` | `start_stack.sh` | `start_stack.ps1` |
+| Harness (Bun+SQLite+React) | ✅ | ✅ | ✅ (Bun supports all three) |
+| Discord bridge / orchestrator | ✅ | ✅ | ✅ (set `MAESTRO_CLI` if not on PATH) |
+| Caddy / systemd deploy templates | ✅ | ⚠️ templates only | ⚠️ templates only |
+
+Notes: macOS/Windows need Bun and Python 3 installed; the Maestro desktop app must
+be running for agent calls. On Windows, agents are **copied** (not symlinked) to
+avoid symlink privilege requirements. Caido is optional and only needed for
+`--mode caido` hunts.
