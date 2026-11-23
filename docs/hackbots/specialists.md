@@ -21,8 +21,12 @@ paths, flag anything needing human validation.
 
 ## How the lead routes
 
-For each discrete task, the lead (or a phase agent) spawns the matching
-specialist instead of doing the work inline:
+**Rule: use a skill for every task.** For each discrete task, the lead (or a
+phase agent) MUST either load the relevant skill with the `skill` tool, or spawn
+the matching specialist subagent (which loads that skill itself). Never improvise
+a skill's procedure from memory.
+
+Specialists replace doing the work inline:
 
 ```
 task: "check reflected XSS on search param"
