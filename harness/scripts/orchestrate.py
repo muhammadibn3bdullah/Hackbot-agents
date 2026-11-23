@@ -23,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent  # project root
 DB = Path(os.environ.get("HARNESS_DB", str(ROOT / "harness" / "hackbots.db")))
+HUNT_BASE = Path(os.environ.get("HUNT_BASE", str(Path.home() / "Targets")))
 
 
 def _find_maestro_cli() -> str:
@@ -48,7 +49,6 @@ def _find_maestro_cli() -> str:
 
 
 CLI = _find_maestro_cli()
-RUNS_DIR = ROOT / "reports" / "runs"
 
 
 def db_conn():
@@ -65,7 +65,7 @@ def find_target(name: str):
     return dict(rows[0]) if rows else None
 
 
-def build_prompt(t: dict, run_id: str, mode: str, directory: str, allow_active: bool) -> str:
+def build_prompt(t: dict, run_id: str, mode: str, directory: str, allow_active: bool, engagement: str) -> str:
     active = (
         "Active probing IS authorized for this run; keep probes low-volume."
         if allow_active
@@ -95,6 +95,8 @@ def build_prompt(t: dict, run_id: str, mode: str, directory: str, allow_active: 
         "Before touching any host, confirm it with harness-ingest check_scope; "
         "if DENIED or UNKNOWN, stop and report blocked.\n"
         f"{task}\n"
+        f"ENGAGEMENT FOLDER: {engagement}\n"
+        f"Save recon output and evidence under that folder (findings/, evidence/).\n"
         "When finished, summarize findings count and highest-value leads."
     )
 
@@ -120,10 +122,12 @@ def main() -> int:
         return 2
 
     run_id = f"run_{int(time.time())}"
-    prompt = build_prompt(t, run_id, a.mode, a.dir, a.allow_active)
+    engagement = HUNT_BASE / t["name"].replace("/", "_").replace(":", "_")
+    prompt = build_prompt(t, run_id, a.mode, a.dir, a.allow_active, str(engagement))
 
     if a.dry_run:
         print(f"[dry-run] run_id={run_id} agent={a.agent} budget={a.budget}m mode={a.mode}")
+        print(f"[dry-run] engagement: {engagement}")
         print(prompt)
         return 0
 
@@ -134,8 +138,10 @@ def main() -> int:
         )
         con.commit()
 
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    transcript = RUNS_DIR / f"{run_id}.md"
+    (engagement / "runs").mkdir(parents=True, exist_ok=True)
+    (engagement / "findings").mkdir(parents=True, exist_ok=True)
+    (engagement / "evidence").mkdir(parents=True, exist_ok=True)
+    transcript = engagement / "runs" / f"{run_id}.md"
     print(f"Starting {run_id} (agent={a.agent}, budget={a.budget}m, mode={a.mode})")
 
     status = "done"
@@ -169,8 +175,21 @@ def main() -> int:
     with db_conn() as con:
         con.execute("UPDATE runs SET status = ? WHERE id = ?", (status, run_id))
         con.commit()
+        rows = con.execute(
+            "SELECT id, severity, kind, status, title, detail FROM findings WHERE target_id = ? ORDER BY id",
+            (t["id"],),
+        ).fetchall()
+    if rows:
+        fl = [f"# Findings — {t['name']}", ""]
+        for r in rows:
+            fl.append(f"## [{r['severity']}] {r['title']}  (#{r['id']}, {r['kind']}, {r['status']})")
+            fl.append("")
+            fl.append(r["detail"] or "")
+            fl.append("")
+        (engagement / "findings" / "findings.md").write_text("\n".join(fl), encoding="utf-8")
 
     print(f"{run_id} -> {status}")
+    print(f"engagement: {engagement}")
     print(f"transcript: {transcript}")
     print(str(response)[:600])
     return 0 if status == "done" else 1
