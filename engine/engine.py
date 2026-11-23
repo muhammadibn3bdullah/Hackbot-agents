@@ -112,9 +112,8 @@ class Engine:
         it. The apex alone is usually a marketing page; the real surface is on subdomains."""
         import osint as O
         from urllib.parse import urlparse
-        apexes = {".".join((urlparse(s).hostname or "").split(".")[-2:]) for s in self.scope.seeds}
         subs = set()
-        for apex in sorted(a for a in apexes if a):
+        for apex in O.enumeration_roots(self.scope):
             subs |= O.enumerate_subdomains(apex, log=self.eng.log)
         in_scope = [s for s in sorted(subs) if self.scope.in_scope_host(s)]
         self.eng.log(f"expand: {len(subs)} subdomain(s) -> {len(in_scope)} in scope; probing liveness...")
@@ -209,7 +208,7 @@ class Engine:
                              f"`{SM.probe_for(c, url, param)}`")
             lines.append("")
         path = os.path.join(self.eng.dir, "arsenal.md")
-        open(path, "w").write("\n".join(lines))
+        open(path, "w", encoding="utf-8").write("\n".join(lines))
         self.eng.log(f"map: wrote arsenal map -> {path}  ← focus your 20% here (or run --hunt to auto-test)")
 
     # ---------------- parallel runner ----------------
@@ -411,7 +410,7 @@ class Engine:
         # Coverage caveats are generated from the ledger, never hand-written.
         lines += ["", closure.render_caveats(self.eng.state, cov)]
         path = os.path.join(self.eng.dir, "report.md")
-        open(path, "w").write("\n".join(lines))
+        open(path, "w", encoding="utf-8").write("\n".join(lines))
         self.eng.log(f"report: wrote {len(c)} confirmed finding(s) -> {path}")
         if not self.mock:
             try:
@@ -449,6 +448,13 @@ MOCK_VALIDATE = {
 
 
 def main():
+    # Windows/non-UTF-8 locales default stdout to the code page (cp1252), which
+    # crashes on the '->' / em-dash characters the engine prints. Force UTF-8.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--scope", required=True, help="engagement/scope JSON (name, in_scope, out_of_scope, seeds)")
     ap.add_argument("--base", default="~/.bughunter-engagements")

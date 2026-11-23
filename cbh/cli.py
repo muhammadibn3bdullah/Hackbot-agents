@@ -346,7 +346,7 @@ def cmd_recon(args: argparse.Namespace) -> int:
     subs = {host for host in candidates
             if host is not None and (host == target or host.endswith("." + target))}
     subs.add(target)
-    (out_dir / "subdomains.txt").write_text("\n".join(sorted(subs)) + "\n")
+    (out_dir / "subdomains.txt").write_text("\n".join(sorted(subs)) + "\n", encoding="utf-8")
     say(f"  Total unique: {color(str(len(subs)), 'bold')}")
 
     # Step 2 — DNS resolution
@@ -358,7 +358,8 @@ def cmd_recon(args: argparse.Namespace) -> int:
         if ips:
             resolved[s] = ips
     (out_dir / "resolved.txt").write_text(
-        "\n".join(f"{h}|{','.join(ips)}" for h, ips in sorted(resolved.items())) + "\n"
+        "\n".join(f"{h}|{','.join(ips)}" for h, ips in sorted(resolved.items())) + "\n",
+        encoding="utf-8",
     )
     say(f"  Resolved: {color(str(len(resolved)), 'bold')} / {len(subs)}")
 
@@ -375,7 +376,7 @@ def cmd_recon(args: argparse.Namespace) -> int:
             if rec:
                 rec["host"] = host
                 live.append(rec)
-    (out_dir / "live-hosts.json").write_text(json.dumps(live, indent=2))
+    (out_dir / "live-hosts.json").write_text(json.dumps(live, indent=2), encoding="utf-8")
     say(f"  HTTP-live: {color(str(len(live)), 'bold')} / {len(resolved)}")
 
     # Step 4 — summary report
@@ -388,7 +389,7 @@ def cmd_recon(args: argparse.Namespace) -> int:
     # recon→hunt handoff contract — see docs/recon-manifest.md
     manifest = build_manifest(target, subs, resolved, live)
     manifest_path = out_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     say(f"  {manifest_path}  {color('(recon→hunt manifest)', 'dim')}")
 
     section("SUMMARY")
@@ -430,7 +431,7 @@ def write_recon_summary(target: str, subs: set[str], resolved: dict, live: list,
         "- For `mta-sts.*` / `*.github.io` hosts, fingerprint against `hunt-subdomain` takeover table.",
         "",
     ]
-    out.write_text("\n".join(lines))
+    out.write_text("\n".join(lines), encoding="utf-8")
 
 
 # ============================================================
@@ -560,12 +561,17 @@ def classify_url(url: str) -> dict:
     skills = load_skill_descriptions()
     matches: dict[str, list[str]] = {}
 
-    parsed = urllib.parse.urlparse(url)
+    # Prefix // for schemeless input so the host lands in netloc, not path —
+    # otherwise `api.php.net/x` puts the host in parsed.path and `.php` fires.
+    parsed = urllib.parse.urlparse(url if "://" in url else "//" + url)
     raw = url
+    # Match path patterns against the request target (path+query), never the host:
+    # `//verify.example.com` otherwise supplies a leading `/verify` and false-triggers.
+    target = parsed.path + ("?" + parsed.query if parsed.query else "")
 
     # Pattern triggers
     for pattern, skill_names in URL_PATTERN_TO_SKILLS:
-        if re.search(pattern, raw, re.I):
+        if re.search(pattern, target, re.I):
             for s in skill_names:
                 matches.setdefault(s, []).append(f"URL matches /{pattern}/")
 
@@ -637,9 +643,21 @@ def cmd_classify(args: argparse.Namespace) -> int:
 # ============================================================
 # triage — run the 7-Question Gate against a finding markdown
 # ============================================================
+# Q1 asks for a real request, so a bare method word only counts when a
+# request-target (a path or URL) follows it. Plain substrings like "GET " used
+# to match inside prose ("tarGET application", "inPUT validation"), letting an
+# untested finding answer Q1 YES. The separator class allows the markdown a PoC
+# is usually written in — backticks and bold/italic around the method or path
+# (`GET /x`, **GET** /x, GET `/x`).
+# ponytail: heuristic ceiling — prose like "an attacker can get /admin" still
+#   reads as a request. Requiring HTTP/ or a scheme after the path would reject
+#   the common bare "GET /path?x=1" PoC (see test_lowercase_request_line), so a
+#   method+path match is the accepted floor; the human reads the verdict.
+_REQUEST_LINE = re.compile(r"\b(?:get|post|put|patch|delete)[ \t`*_]+(?:/|https?://)")
+
 TRIAGE_QUESTIONS = [
     ("Q1", "Can an attacker use this RIGHT NOW with a real HTTP request?",
-     ["curl ", "POST ", "GET ", "HTTP/1.1", "PUT ", "DELETE ", "PATCH "]),
+     ["curl ", "http/1.1", _REQUEST_LINE]),
     ("Q2", "Is the impact on the program's accepted-impact list?",
      ["impact:", "severity:", "p1", "p2", "p3", "p4", "critical", "high", "medium", "low"]),
     ("Q3", "Is the asset in scope?",
@@ -652,8 +670,39 @@ TRIAGE_QUESTIONS = [
      ["leaked", "exfiltrated", "rce", "data:", "credential", "session-id", "cookie:",
       "admin email", "production", "oob callback", "interactsh"]),
     ("Q7", "Is this not on the never-submit list?",
-     ["self-xss", "rate-limit only", "click-jacking", "csrf on logout", "missing security headers"]),
+     ["self-xss", "rate-limit only", "click-jacking", "clickjacking",
+      "csrf on logout", "missing security headers"]),
 ]
+
+# Q3 disqualifiers: scope/asset wording is not affirmative evidence when the
+# finding itself disavows the asset. Two kinds of disavowal:
+#   - STRONG phrases ("out of scope", "excluded from scope") are unambiguous on
+#     any line, including prose ("this asset is out of scope").
+#   - WEAK words ("unknown", "unclear", "maybe") only disavow when they sit on a
+#     scope/asset/target line — otherwise "Impact: unclear scope of exposure" or
+#     "previously unknown" would wrongly kill an in-scope finding.
+# Hyphens are normalized to spaces first, so "out-of-scope" matches "out of scope".
+_Q3_STRONG = ("out of scope", "not in scope", "outside scope", "excluded from scope")
+_Q3_WEAK = ("not verified", "unverified", "unknown", "possibly", "maybe", "unclear")
+_Q3_SCOPE_KEYS = ("scope", "asset", "target", "affected asset", "in scope", "out of scope")
+
+
+def _signal_hit(signal, text: str) -> bool:
+    """One triage signal: a compiled pattern searches, a string is a substring."""
+    if isinstance(signal, re.Pattern):
+        return signal.search(text) is not None
+    return signal.lower() in text
+
+
+def _q3_scope_negated(text: str) -> bool:
+    for ln in text.splitlines():
+        norm = ln.replace("-", " ").lower()
+        if any(phrase in norm for phrase in _Q3_STRONG):
+            return True
+        key = norm.split(":", 1)[0].strip("*`•# ").strip()
+        if key in _Q3_SCOPE_KEYS and any(w in norm for w in _Q3_WEAK):
+            return True
+    return False
 
 
 def cmd_triage(args: argparse.Namespace) -> int:
@@ -670,7 +719,9 @@ def cmd_triage(args: argparse.Namespace) -> int:
     answers = []
     for qid, question, signals in TRIAGE_QUESTIONS:
         # Q7 is INVERTED: presence of a "never-submit" signal = answer is "NO" (kill)
-        hit = any(s.lower() in text for s in signals)
+        hit = any(_signal_hit(s, text) for s in signals)
+        if qid == "Q3" and hit and _q3_scope_negated(text):
+            hit = False  # scope words present, but the finding disavows the scope
         if qid == "Q7":
             answer = "NO — finding matches never-submit category" if hit else "YES"
             ok = not hit
@@ -729,6 +780,9 @@ def parse_finding_metadata(text: str) -> dict:
     """Best-effort parse of YAML-ish frontmatter + section content."""
     md = {"title": "", "severity": "Medium", "asset": "", "endpoint": "",
           "summary": "", "steps": "", "impact": "", "remediation": ""}
+    # A UTF-8 BOM would push `---` off the start, and Windows CRLF line endings
+    # (same platform) break the `^---\n` anchor — normalize both (#200).
+    text = text.lstrip("﻿").replace("\r\n", "\n")
     # YAML frontmatter
     m = re.match(r"^---\n(.*?)\n---\n(.*)", text, re.S)
     body = text
@@ -742,12 +796,16 @@ def parse_finding_metadata(text: str) -> dict:
     headings_only = _mask_report_fences(body)
     sections = {
         "summary": ("summary", "description"),
-        "steps": ("steps", "reproduction", "reproduce", "poc"),
+        "steps": ("steps", "reproduction", "reproduce", "proof of concept", "proof", "poc"),
         "impact": ("impact",),
         "remediation": ("remediation", "fix", "mitigation"),
     }
     for key, headings in sections.items():
-        pattern = r"^##[ \t]*(?:" + "|".join(headings) + r")[ \t]*\n(.*?)(?=^#{1,2}(?!#)|\Z)"
+        # keyword may be followed by more words on the heading line (e.g.
+        # "## Steps to reproduce"); require a space before them so it does not
+        # match mid-word ("## Stepsister").
+        pattern = (r"^##[ \t]*(?:" + "|".join(headings)
+                   + r")(?:[ \t][^\n]*)?[ \t]*\n(.*?)(?=^#{1,2}(?!#)|\Z)")
         match = re.search(pattern, headings_only, re.I | re.M | re.S)
         if match and not md.get(key):
             start, end = match.span(1)
@@ -762,7 +820,7 @@ def parse_finding_metadata(text: str) -> dict:
     return md
 
 
-def render_report(md: dict, platform: str) -> str:
+def render_report(md: dict, platform: str, reporter: str = None) -> str:
     """Render a report draft using the report-writing + bugcrowd-reporting style.
     Built with plain string concatenation to avoid textwrap.dedent issues with
     multi-line interpolated content."""
@@ -773,7 +831,9 @@ def render_report(md: dict, platform: str) -> str:
     impact = md.get("impact") or "(fill in — concrete dollar / PII / state impact)"
     remediation = md.get("remediation") or "(fill in)"
     asset = md.get("asset") or md.get("endpoint") or "(fill in)"
-    user = os.environ.get('USER', 'researcher')
+    # Never leak the OS login name into a public draft (#190): take the handle
+    # from --reporter / CBH_REPORTER, else a placeholder the operator fills in.
+    user = reporter or os.environ.get("CBH_REPORTER") or "(your handle)"
     today = datetime.date.today().isoformat()
 
     if platform == "bugcrowd":
@@ -869,14 +929,16 @@ def cmd_report(args: argparse.Namespace) -> int:
         say(color(f"  finding not found: {finding_path}", "red"))
         return 2
     md = parse_finding_metadata(finding_path.read_text(encoding="utf-8"))
-    draft = render_report(md, args.platform)
+    platform = "h1" if args.platform == "hackerone" else args.platform
+    draft = render_report(md, platform, reporter=getattr(args, "reporter", None))
     if args.out:
         out_path = Path(args.out).resolve()
         cwd = Path.cwd().resolve()
         # Ancestry check, not str.startswith (which a `<cwd>-evil` sibling bypasses).
         if cwd not in out_path.parents:
             print("[error] --out path must be within cwd", file=sys.stderr); return 1
-        out_path.write_text(draft)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(draft, encoding="utf-8")
         section(f"report — {args.platform}")
         say(f"  Draft written: {color(str(out_path), 'bold')}")
         say()
@@ -955,6 +1017,14 @@ def cmd_surface(args: argparse.Namespace) -> int:
 # Main dispatcher
 # ============================================================
 def main() -> int:
+    # Windows/non-UTF-8 consoles default stdout to the code page (cp1252), which
+    # crashes on the check/cross/arrow/em-dash glyphs the CLI prints. Force UTF-8
+    # (matches engine/engine.py:main).
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     parser = argparse.ArgumentParser(
         prog="cbh",
         description=("claude-bughunter CLI — terminal-native deterministic runner.\n"
@@ -1006,7 +1076,11 @@ def main() -> int:
     p_report = sub.add_parser("report", help="emit a report draft")
     p_report.add_argument("finding", help="path to finding markdown file")
     p_report.add_argument("--platform", default="h1",
-                          choices=["h1", "bugcrowd", "intigriti", "immunefi"])
+                          choices=["h1", "hackerone", "bugcrowd", "intigriti", "immunefi"],
+                          help="target platform ('hackerone' is an alias of 'h1')")
+    p_report.add_argument("--reporter", default=None,
+                          help="your platform handle for the Reporter line "
+                               "(or set CBH_REPORTER); omitted -> placeholder")
     p_report.add_argument("--out", help="write draft to this path (else print to stdout)")
     p_report.set_defaults(func=cmd_report)
 
