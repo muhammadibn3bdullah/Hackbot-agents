@@ -75,3 +75,13 @@ research/reports/raw/
 research/reports/drafts/
 research/reports/gaps.md
 research/reports/processed.json
+
+# --- hackbots control plane ---
+.env
+harness/hackbots.db*
+harness/node_modules/
+harness/public/dist/
+harness/logs/
+logs/
+reports/
+__pycache__/

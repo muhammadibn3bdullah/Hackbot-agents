@@ -1,0 +1,27 @@
+# Local TLS reverse proxy template for the harness.
+# Replace "harness.example.com" with your own hostname, then:
+#   caddy validate --config Caddyfile && caddy reload --config Caddyfile
+harness.example.com {
+  encode gzip
+  reverse_proxy 127.0.0.1:13337
+}
+
+# For a pure-local setup without a domain, Caddy can issue a local CA cert:
+# localhost {
+#   reverse_proxy 127.0.0.1:13337
+# }
+
+# Optional HTTP Basic auth when exposing beyond localhost:
+# 1) generate a hash:  caddy hash-password --plaintext '<password>'
+# 2) uncomment the block below and paste the hash:
+# harness.example.com {
+#   basic_auth {
+#     hackbot $2a$14$REPLACE_WITH_CADDY_HASH
+#   }
+#   encode gzip
+#   reverse_proxy 127.0.0.1:13337
+# }
+
+# Server-side token option: export DASHBOARD_TOKEN=<secret> before starting the
+# harness, then open http://127.0.0.1:13337/?token=<secret> once — the UI stores
+# it in localStorage and sends it on every API call.

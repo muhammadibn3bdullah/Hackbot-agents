@@ -344,3 +344,42 @@ Reuse the content freely — including commercially — as long as you credit **
 ---
 
 > *"Give Claude the right skill and it stops being a chatbot. It becomes an operator."*
+
+---
+
+## Added in this fork: Hackbots control plane
+
+This fork adds a local **control plane** on top of the Claude-BugHunter skill
+bundle: a Bun + SQLite + React dashboard, a scoped hunt orchestrator, MCP
+ingest/scope tools, and a two-way Discord ↔ Maestro bridge.
+
+```sh
+bash scripts/install.sh            # upstream: installs the 88 skills
+bash scripts/install-hackbots.sh   # this fork: agents + harness deps + .env
+# edit .env, then:
+bash start_stack.sh
+python3 harness/scripts/orchestrate.py hunt <target> --budget 10
+```
+
+- Dashboard: `http://127.0.0.1:13337` (targets, findings, runs, settings, webhook)
+- `POST /api/ingest` (Bearer) receives findings; ≥ threshold auto-posts to Discord
+- `harness/scripts/orchestrate.py` runs scoped local hunts with time budgets
+- `discord_bot/bridge.py` lets an allowlisted Discord user chat with a Maestro agent
+- Docs: `docs/hackbots/`
+
+### Skills added by this fork (5)
+
+`interceptor`, `js_analysis`, `lazy_chunk_downloader`, `say_hello`,
+`api-fingerprint-caido` — plus 3 subagents in `agents/`.
+
+> **Provenance / licensing note:** these 5 skills and 3 agents were derived from
+> the ArcanumSec "Hackbots (using Agent Frameworks)" course materials and are
+> included here at the fork owner's discretion. They are **not** covered by the
+> upstream MIT / CC BY 4.0 grants. If you reuse this fork, verify your own rights
+> to those course-derived files before redistributing them.
+
+### Credits
+
+Built on [Claude-BugHunter](https://github.com/elementalsouls/Claude-BugHunter)
+by Sachin Sharma / ElementalSoul — code MIT, content CC BY 4.0. The 83 upstream
+skills are unchanged; this fork only adds the control plane and the 5 skills above.

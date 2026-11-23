@@ -1,0 +1,22 @@
+[Unit]
+Description=Hackbots control plane (Bun harness)
+After=network.target
+
+[Service]
+Type=simple
+User=hackbot
+Group=hackbot
+WorkingDirectory=/opt/hackbots
+Environment=HOST=127.0.0.1
+Environment=PORT=13337
+Environment=DATA_DIR=/opt/hackbots/data
+# Set INGEST_TOKEN in an EnvironmentFile with 0600 permissions instead of here.
+# EnvironmentFile=/opt/hackbots/.env
+ExecStart=/usr/local/bin/bun run start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
