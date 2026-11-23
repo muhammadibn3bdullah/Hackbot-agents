@@ -17,6 +17,12 @@ foreach ($d in $agentDirs) {
       Write-Host "copied agent $($_.Name) -> $d"
     }
   }
+  $specSrc = Join-Path $Repo "agents\specialists"
+  $specDest = Join-Path $d "specialists"
+  if ((Test-Path $specSrc) -and -not (Test-Path $specDest)) {
+    Copy-Item $specSrc $specDest -Recurse
+    Write-Host "copied specialists/ -> $d"
+  }
 }
 
 $bun = (Get-Command bun -ErrorAction SilentlyContinue).Source

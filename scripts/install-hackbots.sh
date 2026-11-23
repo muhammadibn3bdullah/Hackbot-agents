@@ -17,6 +17,14 @@ for f in agents/*.md; do
   done
 done
 
+# On-demand per-skill specialist subagents (namespaced specialists/<skill-id>)
+for base in ~/.config/opencode/agents ~/.claude/agents; do
+  if [ ! -e "$base/specialists" ] && [ ! -L "$base/specialists" ]; then
+    ln -s "$REPO/agents/specialists" "$base/specialists"
+    echo "linked specialists/ -> $base"
+  fi
+done
+
 BUN="$(command -v bun || true)"
 [ -n "$BUN" ] || BUN="$HOME/.bun/bin/bun"
 if [ -x "$BUN" ]; then
